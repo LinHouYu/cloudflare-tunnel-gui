@@ -88,8 +88,9 @@ jobs:
       - name: 安装前端依赖
         run: npm ci
 
-      - name: 下载并准备对应架构的 Cloudflared Sidecar 二进制
-        run: node scripts/prepare-sidecars.mjs --target=${{ matrix.target }}
+      - name: 清理任何预存二进制 (确保不将 cloudflared 预打包进安装包)
+        run: |
+          node -e "const fs = require('fs'); ['binaries', 'src-tauri/binaries'].forEach(d => { if (fs.existsSync(d)) fs.rmSync(d, { recursive: true, force: true }); });"
 
       - name: 构建 Tauri 应用程序并发布 Release
         uses: tauri-apps/tauri-action@v0
@@ -103,12 +104,12 @@ jobs:
             
             基于 Tauri 2.0 + Vue 3 + Windows 11 Fluent Design 构建的跨平台极简 Cloudflare 隧道管理客户端。
 
-            ### 📦 跨平台多架构安装包列表：
-            - **Windows**: x86_64 (64位), i686 (32位) - 便携版 / MSI 安装包 / NSIS 安装包
+            ### 📦 跨平台多架构轻量级安装包列表：
+            - **Windows**: x86_64 (64位), i686 (32位) - 便携版 / MSI 安装包 / NSIS 安装包 (超轻量 ~4MB)
             - **macOS**: Apple Silicon (M1/M2/M3/M4) / Intel - DMG 镜像包
             - **Linux**: x86_64, i686, aarch64 (ARM64), armv7 (ARM32) - AppImage / DEB 安装包
             
-            *(所有架构安装包已内嵌官方匹配的 cloudflared 二进制文件)*
+            *(应用启动后可在界面内一键自动检测并在线安装/更新官方 cloudflared 二进制)*
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

@@ -611,9 +611,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { safeInvoke as invoke, safeListen as listen } from './utils/tauriBridge';
 import { LANG_ORDER, LANG_DATA } from './i18n';
 import { LangKey, TunnelInfo, LogEntry } from './types';
 import { isTunnelNameValid, isPortValid, isDomainValid } from './utils/validation';
@@ -621,19 +619,14 @@ import { getCloudflaredTarget } from './utils/cloudflaredDownloader';
 import { soundManager } from './utils/sound';
 import { playRandomEasterEggSound } from './utils/easterEggAudios';
 
-// Tauri 窗口实例与控制 (通过 Rust 后端命令确保 100% 权限与成功率)
-const appWindow = getCurrentWindow();
+// 窗口状态与控制
 const isMaximized = ref(false);
 
 const handleMinimize = async () => {
   try {
     await invoke('minimize_window');
-  } catch {
-    try {
-      await appWindow.minimize();
-    } catch (e) {
-      console.error('Minimize error:', e);
-    }
+  } catch (e) {
+    console.error('Minimize error:', e);
   }
 };
 
@@ -641,26 +634,16 @@ const handleToggleMaximize = async () => {
   try {
     const isMax = await invoke<boolean>('toggle_maximize_window');
     isMaximized.value = isMax;
-  } catch {
-    try {
-      await appWindow.toggleMaximize();
-      isMaximized.value = await appWindow.isMaximized();
-    } catch (e) {
-      console.error('Toggle maximize error:', e);
-    }
+  } catch (e) {
+    console.error('Toggle maximize error:', e);
   }
 };
 
 const handleCloseWindow = async () => {
   try {
-    // 隐藏窗口到托盘 (避免直接杀死后台隧道进程)
     await invoke('close_window');
-  } catch {
-    try {
-      await appWindow.hide();
-    } catch (e) {
-      console.error('Close/Hide window error:', e);
-    }
+  } catch (e) {
+    console.error('Close/Hide window error:', e);
   }
 };
 
@@ -1235,9 +1218,6 @@ onMounted(async () => {
   // 获取并监听窗口最大化状态
   try {
     isMaximized.value = await invoke<boolean>('is_window_maximized');
-    await appWindow.onResized(async () => {
-      isMaximized.value = await invoke<boolean>('is_window_maximized');
-    });
   } catch {}
 
   // 执行一次输入合法性初步检查（如有初始值）

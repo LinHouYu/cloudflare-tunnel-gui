@@ -984,21 +984,35 @@ const handleRefreshTunnels = async () => {
   }
 };
 
-// 创建隧道 (触发 playSuccess 音效)
+// 创建隧道并自动绑定 DNS (触发 playSuccess 音效)
 const handleCreateTunnel = async () => {
-  const name = serverConfig.value.name.trim();
-  if (!name || !isTunnelNameValid(name)) {
+  const tunnelName = serverConfig.value.name.trim();
+
+  if (!tunnelName || !isTunnelNameValid(tunnelName)) {
     serverNameHasError.value = true;
     appendLog(`[ERROR] ${t.value.server_tab.errors.tunnel_invalid}`, 'error', 'server');
     return;
   }
 
+  // 自动隐式拼接完整的子域名
+  const autoDomain = `${tunnelName}.zhishifenzi.dpdns.org`;
+
+  // 持久化到 localStorage
+  localStorage.setItem('server_tunnel_name', tunnelName);
+
   soundManager.playSuccess();
   isCreatingTunnel.value = true;
+
+  appendLog(`[INFO] 正在创建隧道 [${tunnelName}] 并自动绑定 DNS → ${autoDomain} ...`, 'info', 'server');
+
   try {
-    const res = await invoke<string>('create_tunnel', { name });
-    appendLog(`[SUCCESS] 成功创建隧道 [${name}]: ${res}`, 'success', 'server');
-    showToast(`隧道 [${name}] 创建成功！`);
+    // ✅ 调用后端接口：隐式绑定拼接后的完整子域名
+    const res = await invoke<string>('create_and_route_tunnel', {
+      tunnelName: tunnelName,
+      domain: autoDomain,
+    });
+    appendLog(`[SUCCESS] ${res}`, 'success', 'server');
+    showToast(`隧道 [${tunnelName}] 创建并 DNS 绑定成功！`);
     await handleRefreshTunnels();
   } catch (err: any) {
     appendLog(`[ERROR] 创建隧道失败: ${err}`, 'error', 'server');

@@ -66,6 +66,30 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
       return `隧道 [${name}] 创建成功 (ID: ${newTunnel.id})` as unknown as T;
     }
 
+    case 'create_and_route_tunnel': {
+      const tunnelName = (args?.tunnelName as string) || 'demo-tunnel';
+      const domain = (args?.domain as string) || 'demo.example.com';
+      const uuid = [
+        Math.random().toString(16).substr(2, 8),
+        Math.random().toString(16).substr(2, 4),
+        '4' + Math.random().toString(16).substr(2, 3),
+        Math.random().toString(16).substr(2, 4),
+        Math.random().toString(16).substr(2, 12),
+      ].join('-');
+      const newTunnel = {
+        id: uuid,
+        name: tunnelName,
+        created: new Date().toISOString().replace('T', ' ').substr(0, 19),
+        connections: 'Inactive',
+      };
+      mockTunnels.unshift(newTunnel);
+      emitMockLog(`[INFO] 正在创建隧道 [${tunnelName}]...`, 'info', 'server');
+      emitMockLog(`[SUCCESS] 隧道 [${tunnelName}] 创建成功，UUID: ${uuid}`, 'success', 'server');
+      emitMockLog(`[INFO] 执行 DNS 绑定: cloudflared tunnel route dns -f ${uuid} ${domain}`, 'info', 'server');
+      emitMockLog(`[SUCCESS] CNAME 已强制覆盖写入: ${domain} → ${uuid}.cfargotunnel.com`, 'success', 'server');
+      return `✅ 隧道 [${tunnelName}] 已创建并绑定 DNS！\n   UUID: ${uuid}\n   CNAME 已强制覆盖写入: ${domain}` as unknown as T;
+    }
+
     case 'delete_tunnel': {
       const name = args?.name as string;
       mockTunnels = mockTunnels.filter(t => t.name !== name);

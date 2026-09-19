@@ -150,26 +150,269 @@ fn create_tunnel(name: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn delete_tunnel(name: String) -> Result<String, String> {
+fn delete_tunnel(
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
-        return Err("隧道名不能为空".to_string());
+        return Err("隧道 ID / 名称不能为空".to_string());
     }
 
-    let mut cmd = create_base_command();
-    cmd.args(["tunnel", "delete", trimmed])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    // ── 先 kill 本进程管理的 server 子进程，避免 1022 "active connections" ──
+    // cloudflared 禁止删除有活跃连接的隧道，必须先让本进程的 child 退出。
+    if let Ok(mut guard) = state.server_process.lock() {
+        if let Some(ref mut child) = *guard {
+            println!("[delete_tunnel] 检测到运行中的服务端子进程，正在 kill...");
+            let _ = child.kill();
+            let _ = child.wait(); // 回收 zombie，避免 SIGCHLD 残留
+            *guard = None;
+            println!("[delete_tunnel] 服务端子进程已终止");
+        }
+    }
 
-    let output = cmd.output().map_err(|e| format!("执行删除命令失败: {}", e))?;
-    let out_str = String::from_utf8_lossy(&output.stdout).to_string();
-    let err_str = String::from_utf8_lossy(&output.stderr).to_string();
+    println!("[delete_tunnel] 执行: cloudflared tunnel delete -f {}", trimmed);
+
+    // -f / --force 强制删除，即使 Cloudflare 远端仍有活跃连接记录也能成功
+    let output = create_base_command()
+        .args(["tunnel", "delete", "-f", trimmed])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("执行删除命令失败: {}", e))?;
+
+    let out_str = String::from_utf8_lossy(&output.stdout).into_owned();
+    let err_str = String::from_utf8_lossy(&output.stderr).into_owned();
+
+    println!("[delete_tunnel] stdout: {}", out_str.trim());
+    println!("[delete_tunnel] stderr: {}", err_str.trim());
 
     if output.status.success() {
-        Ok(format!("隧道 {} 已成功删除", trimmed))
+        Ok(format!("隧道 [{}] 已成功删除", trimmed))
     } else {
         Err(if !err_str.trim().is_empty() { err_str } else { out_str })
     }
+}
+
+// ─── 内部辅助：UUID 提取 / 目录解析 / 统一子进程调用 ───────────────────────
+
+/// 执行单条 cloudflared 子命令，同步等待并统一错误处理。
+/// 成功时返回 `(stdout, stderr)`，失败时返回 Err(stderr ∪ stdout)。
+fn run_cloudflared(args: &[&str]) -> Result<(String, String), String> {
+    println!("[run_cloudflared] 执行: cloudflared {}", args.join(" "));
+
+    let output = create_base_command()
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                "未找到 cloudflared 可执行文件，请先在「杂项与关于」页面点击「安装 cloudflared」"
+                    .to_string()
+            } else {
+                format!("启动 cloudflared 子进程失败: {}", e)
+            }
+        })?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+
+    println!("[run_cloudflared] stdout: {}", stdout.trim());
+    println!("[run_cloudflared] stderr: {}", stderr.trim());
+    println!("[run_cloudflared] exit code: {:?}", output.status.code());
+
+    if output.status.success() {
+        Ok((stdout, stderr))
+    } else {
+        Err(if !stderr.trim().is_empty() { stderr } else { stdout })
+    }
+}
+
+/// 从 `cloudflared tunnel create` 的输出或凭证目录中提取隧道 UUID。
+///
+/// ## 提取策略（按可靠性降序）
+///
+/// ### 策略 1 — 读取 JSON 凭证文件（最可靠）
+/// cloudflared 创建成功后，总会在 `~/.cloudflared/<uuid>.json` 写入凭证。
+/// 文件内容形如：`{"AccountTag":"...","TunnelSecret":"...","TunnelID":"<uuid>",...}`
+/// 直接解析其中的 `TunnelID` 字段，不受输出格式/ANSI 颜色转义影响。
+///
+/// ### 策略 2 — 正则匹配纯文本输出（兜底）
+/// 去除 ANSI 转义序列后，在 stderr/stdout 中匹配 UUID 格式字符串。
+fn extract_tunnel_uuid(stdout: &str, stderr: &str, tunnel_name: &str) -> Result<String, String> {
+    // ── 策略 1：从凭证 JSON 文件读取 TunnelID（最可靠，不受输出格式影响） ──
+    let home = dirs::home_dir()
+        .ok_or_else(|| "无法确定用户主目录（$HOME 未设置）".to_string())?;
+    let config_dir = home.join(".cloudflared");
+
+    println!("[extract_uuid] 扫描凭证目录: {}", config_dir.display());
+
+    // 找到所有 <uuid>.json，解析其中包含当前 tunnel_name 的文件
+    let uuid_re = uuid_regex();
+    let mut best: Option<(std::time::SystemTime, String)> = None;
+
+    if let Ok(entries) = fs::read_dir(&config_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let stem = match path.file_stem().and_then(|s| s.to_str()) {
+                Some(s) => s.to_string(),
+                None => continue,
+            };
+            if !uuid_re.is_match(&stem) {
+                continue; // 跳过 cert.pem、config.yml 等
+            }
+
+            // 读取 JSON 确认 TunnelName 匹配（避免拿到旧隧道的 UUID）
+            if let Ok(content) = fs::read_to_string(&path) {
+                let name_matches = content.contains(&format!("\"TunnelName\":\"{}\"", tunnel_name))
+                    || content.contains(&format!("\"Name\":\"{}\"", tunnel_name));
+                let uuid_in_file: Option<String> = {
+                    // 直接从 JSON 文本中提取 TunnelID（避免引入 serde_json 额外解析）
+                    extract_json_string_field(&content, "TunnelID")
+                        .or_else(|| extract_json_string_field(&content, "TunnelId"))
+                };
+
+                if let Some(ref uuid) = uuid_in_file {
+                    println!(
+                        "[extract_uuid] 找到凭证文件: {} → TunnelID: {}, 名称匹配: {}",
+                        path.display(),
+                        uuid,
+                        name_matches
+                    );
+                    if name_matches {
+                        // 名称精确匹配，直接返回
+                        println!("[extract_uuid] ✅ 策略 1（精确匹配）UUID: {}", uuid);
+                        return Ok(uuid.clone());
+                    }
+                    // 不匹配名称，但作为时间最新者备用
+                    if let Ok(mtime) = entry.metadata().and_then(|m| m.modified()) {
+                        let is_newer = best.as_ref().map_or(true, |(t, _)| mtime > *t);
+                        if is_newer {
+                            best = Some((mtime, uuid.clone()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 名称精确匹配未找到，使用最新创建的 UUID（适合刚创建的隧道）
+    if let Some((_, uuid)) = best {
+        println!("[extract_uuid] ✅ 策略 1（最新文件）UUID: {}", uuid);
+        return Ok(uuid);
+    }
+
+    // ── 策略 2：从 cloudflared 的输出文本中正则提取（兜底） ──
+    // 先去除 ANSI 颜色转义序列，再做匹配
+    let clean_stderr = strip_ansi(stderr);
+    let clean_stdout = strip_ansi(stdout);
+
+    println!("[extract_uuid] 策略 1 未命中，尝试正则匹配...");
+    println!("[extract_uuid] 去色后 stderr: {}", clean_stderr.trim());
+    println!("[extract_uuid] 去色后 stdout: {}", clean_stdout.trim());
+
+    for line in clean_stderr.lines().chain(clean_stdout.lines()) {
+        if let Some(m) = uuid_re.find(line) {
+            let uuid = m.as_str().to_string();
+            println!("[extract_uuid] ✅ 策略 2（正则）UUID: {}", uuid);
+            return Ok(uuid);
+        }
+    }
+
+    // 两种策略都失败
+    Err(format!(
+        "无法从 cloudflared 输出中提取隧道 UUID。\n\
+         原始 stdout:\n{}\n\
+         原始 stderr:\n{}\n\
+         请检查 ~/.cloudflared/ 目录下是否存在 <uuid>.json 凭证文件。",
+        stdout.trim(),
+        stderr.trim()
+    ))
+}
+
+/// 从 JSON 文本（不依赖 serde_json）中提取指定字段的字符串值。
+/// 仅适用于简单的 `"Key":"Value"` 格式。
+fn extract_json_string_field(json: &str, key: &str) -> Option<String> {
+    let pattern = format!("\"{}\":\"", key);
+    let start = json.find(&pattern)? + pattern.len();
+    let end = json[start..].find('"')? + start;
+    Some(json[start..end].to_string())
+}
+
+/// 惰性初始化 UUID 正则（编译一次，全局复用）。
+fn uuid_regex() -> &'static regex::Regex {
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        regex::Regex::new(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+        )
+        .expect("UUID regex is valid")
+    })
+}
+
+/// 去除字符串中的 ANSI 终端颜色/样式转义序列。
+/// cloudflared 在终端模式下会在输出中混入这些序列，导致正则匹配失败。
+fn strip_ansi(s: &str) -> String {
+    // ANSI escape: ESC [ ... m  （最常见的 SGR 序列）
+    use std::sync::OnceLock;
+    static ANSI_RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = ANSI_RE.get_or_init(|| {
+        regex::Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]").expect("ANSI regex is valid")
+    });
+    re.replace_all(s, "").into_owned()
+}
+
+/// **两阶段原子化**创建隧道并强制绑定 DNS CNAME：
+///
+/// - 阶段 1：`tunnel create <tunnel_name>` → 从 JSON 凭证文件提取 UUID（最可靠）
+/// - 阶段 2：`tunnel route dns -f <uuid> <domain>`
+///
+/// `-f` / `--overwrite-dns` 强制覆盖已有 CNAME，
+/// 彻底规避遗留死链与 DNS 记录冲突，无需用户进入 Cloudflare Dashboard。
+#[tauri::command]
+fn create_and_route_tunnel(tunnel_name: String, domain: String) -> Result<String, String> {
+    let name = tunnel_name.trim().to_string();
+    let domain = domain.trim().to_string();
+
+    if name.is_empty() {
+        return Err("隧道名不能为空".to_string());
+    }
+    if domain.is_empty() {
+        return Err("域名不能为空".to_string());
+    }
+
+    println!("[create_and_route_tunnel] 开始：name={}, domain={}", name, domain);
+
+    // ── 阶段 1：创建隧道 ──────────────────────────────────────────────────────
+    let (stdout, stderr) = run_cloudflared(&["tunnel", "create", &name])
+        .map_err(|e| format!("[阶段 1 / 创建隧道] 执行失败:\n{}", e))?;
+
+    println!("[create_and_route_tunnel] 阶段 1 完成，开始提取 UUID...");
+
+    let uuid = extract_tunnel_uuid(&stdout, &stderr, &name)
+        .map_err(|e| format!("[阶段 1 / UUID 提取] {}", e))?;
+
+    println!("[create_and_route_tunnel] ✅ 获取到 UUID: {}", uuid);
+
+    // ── 阶段 2：强制绑定 DNS CNAME（-f 强制覆盖） ────────────────────────────
+    println!(
+        "[create_and_route_tunnel] 阶段 2：route dns -f {} {}",
+        uuid, domain
+    );
+
+    run_cloudflared(&["tunnel", "route", "dns", "-f", &uuid, &domain])
+        .map_err(|e| format!("[阶段 2 / DNS 绑定] 失败 (UUID: {}):\n{}", uuid, e))?;
+
+    println!("[create_and_route_tunnel] ✅ DNS 绑定成功");
+
+    Ok(format!(
+        "✅ 隧道 [{name}] 已创建并绑定 DNS！\n   UUID: {uuid}\n   CNAME 已强制覆盖写入: {domain}"
+    ))
 }
 
 #[tauri::command]
@@ -950,6 +1193,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_tunnels,
             create_tunnel,
+            create_and_route_tunnel,
             delete_tunnel,
             start_server_tunnel,
             stop_server_tunnel,

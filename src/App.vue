@@ -849,30 +849,48 @@ const updateTabSlider = () => {
 // 服务端通道模式: 'fixed' (专属固定通道) | 'temp' (免配置临时通道)
 const serverMode = ref<'fixed' | 'temp'>((localStorage.getItem('server_mode') as 'fixed' | 'temp') || 'fixed');
 const tempTunnelUrl = ref(localStorage.getItem('temp_tunnel_url') || '');
-const serverNodeCode = ref(localStorage.getItem('server_node_code') || localStorage.getItem('temp_tunnel_node_code') || '');
+const tempTunnelNodeCode = ref(localStorage.getItem('temp_tunnel_node_code') || '');
+const fixedTunnelNodeCodes = ref<string[]>(JSON.parse(localStorage.getItem('fixed_tunnel_node_codes') || '[]'));
 const isFetchingTempUrl = ref(false);
 
-// 服务端运行状态文本计算 (专属固定通道与免配置临时通道均支持动态展示 Cloudflare 节点代码与地理区域)
+// 服务端运行状态文本计算 (免配置临时通道显示 1 个获取到的节点，专属固定通道显示最多 3 个高可用边缘节点)
 const serverStatusText = computed(() => {
   if (!serverRunning.value) {
     return t.value.server_tab.status_stopped;
   }
 
-  const baseStatus = (serverMode.value === 'temp' && tempTunnelUrl.value)
-    ? t.value.server_tab.status_temp_ready
-    : t.value.server_tab.status_running;
+  const nodesMap = t.value.server_tab.nodes || {};
+  const nodeLabel = t.value.server_tab.node_label || '节点';
 
-  if (serverNodeCode.value) {
-    const codeKey = serverNodeCode.value.toLowerCase();
-    const codeUpper = serverNodeCode.value.toUpperCase();
-    const nodesMap = t.value.server_tab.nodes || {};
-    const region = nodesMap[codeKey];
-    const nodeLabel = t.value.server_tab.node_label || '节点';
-    if (region) {
-      return `${baseStatus} (${nodeLabel}: ${codeUpper} - ${region})`;
-    } else {
-      return `${baseStatus} (${nodeLabel}: ${codeUpper})`;
+  // 1. 免配置临时通道 (显示单个获取到的节点)
+  if (serverMode.value === 'temp') {
+    const baseStatus = tempTunnelUrl.value
+      ? t.value.server_tab.status_temp_ready
+      : t.value.server_tab.status_running;
+
+    if (tempTunnelNodeCode.value) {
+      const codeKey = tempTunnelNodeCode.value.toLowerCase();
+      const codeUpper = tempTunnelNodeCode.value.toUpperCase();
+      const region = nodesMap[codeKey];
+      if (region) {
+        return `${baseStatus} (${nodeLabel}: ${codeUpper} - ${region})`;
+      } else {
+        return `${baseStatus} (${nodeLabel}: ${codeUpper})`;
+      }
     }
+    return baseStatus;
+  }
+
+  // 2. 专属固定通道 (显示最多 3 个高可用边缘节点)
+  const baseStatus = t.value.server_tab.status_running;
+  if (fixedTunnelNodeCodes.value.length > 0) {
+    const formattedNodes = fixedTunnelNodeCodes.value.slice(0, 3).map((code) => {
+      const codeKey = code.toLowerCase();
+      const codeUpper = code.toUpperCase();
+      const region = nodesMap[codeKey];
+      return region ? `${codeUpper} - ${region}` : codeUpper;
+    });
+    return `${baseStatus} (${nodeLabel}: ${formattedNodes.join(', ')})`;
   }
 
   return baseStatus;
@@ -924,14 +942,25 @@ watch(tempTunnelUrl, (newVal) => {
   }
 });
 
-watch(serverNodeCode, (newVal) => {
+watch(tempTunnelNodeCode, (newVal) => {
   if (newVal) {
-    localStorage.setItem('server_node_code', newVal);
+    localStorage.setItem('temp_tunnel_node_code', newVal);
   } else {
-    localStorage.removeItem('server_node_code');
     localStorage.removeItem('temp_tunnel_node_code');
   }
 });
+
+watch(
+  fixedTunnelNodeCodes,
+  (newVal) => {
+    if (newVal && newVal.length > 0) {
+      localStorage.setItem('fixed_tunnel_node_codes', JSON.stringify(newVal));
+    } else {
+      localStorage.removeItem('fixed_tunnel_node_codes');
+    }
+  },
+  { deep: true }
+);
 
 // 表单输入
 const serverConfig = ref({
@@ -1219,9 +1248,8 @@ const handleStartServer = async () => {
     return;
   }
 
-  serverNodeCode.value = '';
-  localStorage.removeItem('server_node_code');
-  localStorage.removeItem('temp_tunnel_node_code');
+  fixedTunnelNodeCodes.value = [];
+  localStorage.removeItem('fixed_tunnel_node_codes');
   soundManager.playSuccess();
   try {
     const res = await invoke<string>('start_server_tunnel', { name, port });
@@ -1244,9 +1272,9 @@ const handleStartTempServer = async () => {
   }
 
   tempTunnelUrl.value = '';
-  serverNodeCode.value = '';
+  tempTunnelNodeCode.value = '';
   isFetchingTempUrl.value = true;
-  localStorage.removeItem('server_node_code');
+  localStorage.removeItem('temp_tunnel_url');
   localStorage.removeItem('temp_tunnel_node_code');
   soundManager.playSuccess();
 
@@ -1286,11 +1314,12 @@ const handleStopServer = async () => {
     const res = await invoke<string>('stop_server_tunnel');
     serverRunning.value = false;
     tempTunnelUrl.value = '';
-    serverNodeCode.value = '';
+    tempTunnelNodeCode.value = '';
+    fixedTunnelNodeCodes.value = [];
     isFetchingTempUrl.value = false;
     localStorage.removeItem('temp_tunnel_url');
-    localStorage.removeItem('server_node_code');
     localStorage.removeItem('temp_tunnel_node_code');
+    localStorage.removeItem('fixed_tunnel_node_codes');
     appendLog(`[INFO] ${res}`, 'warn', 'server');
     showToast(`服务端隧道已停止`);
   } catch (err: any) {
@@ -1505,7 +1534,14 @@ onMounted(async () => {
           if (locMatch && locMatch[1]) {
             const rawLetters = locMatch[1].replace(/[^a-zA-Z]/g, '').slice(0, 3).toLowerCase();
             if (rawLetters.length === 3) {
-              serverNodeCode.value = rawLetters;
+              if (serverMode.value === 'temp') {
+                tempTunnelNodeCode.value = rawLetters;
+              } else {
+                // 专属固定通道最多收集并展示 3 个不同边缘节点
+                if (!fixedTunnelNodeCodes.value.includes(rawLetters) && fixedTunnelNodeCodes.value.length < 3) {
+                  fixedTunnelNodeCodes.value.push(rawLetters);
+                }
+              }
             }
           }
         }
@@ -1528,10 +1564,12 @@ onMounted(async () => {
     // 如果服务端实际未在运行，清空可能残留的临时公网地址与节点代码
     if (!serverRunning.value) {
       tempTunnelUrl.value = '';
-      serverNodeCode.value = '';
+      tempTunnelNodeCode.value = '';
+      fixedTunnelNodeCodes.value = [];
       localStorage.removeItem('temp_tunnel_url');
-      localStorage.removeItem('server_node_code');
       localStorage.removeItem('temp_tunnel_node_code');
+      localStorage.removeItem('fixed_tunnel_node_codes');
+      localStorage.removeItem('server_node_code');
     }
 
     await handleRefreshTunnels();

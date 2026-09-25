@@ -100,10 +100,13 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
     case 'start_server_tunnel': {
       const name = (args?.name as string) || 'mc';
       const port = (args?.port as string) || '25565';
+      const sampleNodes = ['eze01', 'gru02', 'sjc01', 'lax03', 'hkg01', 'nrt02', 'lhr01', 'fra02'];
+      const chosenNode = sampleNodes[Math.floor(Math.random() * sampleNodes.length)];
       emitMockLog(`[INFO] 正在与 Cloudflare 全球边缘节点建立多路复用连接 (QUIC/HTTP3)...`, 'info', 'server');
       setTimeout(() => {
+        emitMockLog(`[INFO] Registered tunnel connection connIndex=0 connection=cf-${Math.random().toString(16).substr(2, 8)} location=${chosenNode} protocol=quic`, 'info', 'server');
         emitMockLog(`[INFO] 已在本地 127.0.0.1:${port} 建立入口代理服务`, 'info', 'server');
-        emitMockLog(`[SUCCESS] 隧道 [${name}] 已成功连接至 4 个边缘路由节点 (HKG, NRT, SJC, LAX)`, 'success', 'server');
+        emitMockLog(`[SUCCESS] 隧道 [${name}] 已成功连接至边缘路由节点 (location=${chosenNode})`, 'success', 'server');
       }, 500);
       return `服务端隧道 [${name}] 启动成功 (端口: ${port})` as unknown as T;
     }

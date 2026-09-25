@@ -108,6 +108,25 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
       return `服务端隧道 [${name}] 启动成功 (端口: ${port})` as unknown as T;
     }
 
+    case 'start_temp_tunnel': {
+      const port = (args?.port as string) || '25565';
+      const adjectives = ['swift', 'cosmic', 'lucky', 'bright', 'cyber', 'silent', 'amber'];
+      const nouns = ['tiger', 'falcon', 'nebula', 'tunnel', 'dragon', 'phoenix', 'forest'];
+      const randomSubdomain = `${adjectives[Math.floor(Math.random() * adjectives.length)]}-${nouns[Math.floor(Math.random() * nouns.length)]}-${Math.floor(Math.random() * 900 + 100)}`;
+      const tempDomain = `${randomSubdomain}.trycloudflare.com`;
+
+      emitMockLog(`[INFO] 正在启动免配置临时隧道 (转发端口: ${port})...`, 'info', 'server');
+      emitMockLog(`[INFO] 正在向 Cloudflare 申请临时公网域名 (QUIC/HTTP3)...`, 'info', 'server');
+      setTimeout(() => {
+        emitMockLog(`+--------------------------------------------------------------------------------------------+`, 'info', 'server');
+        emitMockLog(`|  Your quick Tunnel has been created! Visit it at (it may take some time to be reachable):  |`, 'info', 'server');
+        emitMockLog(`|  https://${tempDomain}                                                                      |`, 'success', 'server');
+        emitMockLog(`+--------------------------------------------------------------------------------------------+`, 'info', 'server');
+        emitMockLog(`[SUCCESS] 临时隧道创建成功！分配公网域名: https://${tempDomain}`, 'success', 'server');
+      }, 700);
+      return `免配置临时隧道启动成功 (端口: ${port})` as unknown as T;
+    }
+
     case 'stop_server_tunnel':
       emitMockLog('[WARN] 服务端隧道连接已主动断开', 'warn', 'server');
       return '服务端隧道已停止' as unknown as T;

@@ -150,32 +150,57 @@
     <main class="fluent-body">
       <!-- 1. 服务端 Tab -->
       <section v-show="currentTab === 'server'" class="tab-view server-view animated-view">
+        <!-- 服务端通道模式分段选择器 (Segmented Control，带平滑滑动滑块) -->
+        <div class="server-mode-selector" ref="modeSelectorRef">
+          <div class="mode-slider" :style="modeSliderStyle"></div>
+          <button
+            ref="fixedModeBtnRef"
+            class="mode-segment-btn"
+            :class="{ active: serverMode === 'fixed' }"
+            @click="setServerMode('fixed')"
+          >
+            <span class="mode-icon">🔒</span>
+            <span>{{ t.server_tab.mode_fixed }}</span>
+          </button>
+          <button
+            ref="tempModeBtnRef"
+            class="mode-segment-btn"
+            :class="{ active: serverMode === 'temp' }"
+            @click="setServerMode('temp')"
+          >
+            <span class="mode-icon">⚡</span>
+            <span>{{ t.server_tab.mode_temp }}</span>
+          </button>
+        </div>
+
         <!-- 输入表单卡片 -->
         <div class="fluent-card form-card">
           <div class="form-grid">
-            <!-- 隧道名字 -->
-            <div class="fluent-form-group">
-              <label class="form-label">
-                {{ t.server_tab.tunnel_name }}
-                <span class="required">*</span>
-              </label>
-              <div class="input-container">
-                <input
-                  type="text"
-                  v-model="serverConfig.name"
-                  :placeholder="t.server_tab.tunnel_name_placeholder"
-                  :class="['fluent-input', { 'input-error': serverNameHasError }]"
-                  @input="onServerNameInput"
-                />
+            <!-- 隧道名字 (仅在专属固定通道下显示) -->
+            <transition name="mode-fade">
+              <div v-if="serverMode === 'fixed'" class="fluent-form-group">
+                <label class="form-label">
+                  {{ t.server_tab.tunnel_name }}
+                  <span class="required">*</span>
+                </label>
+                <div class="input-container">
+                  <input
+                    type="text"
+                    v-model="serverConfig.name"
+                    :placeholder="t.server_tab.tunnel_name_placeholder"
+                    :class="['fluent-input', { 'input-error': serverNameHasError }]"
+                    @input="onServerNameInput"
+                  />
+                </div>
+                <div v-if="serverNameHasError" class="error-tip">
+                  <span class="error-icon">⚠️</span>
+                  {{ t.server_tab.errors.tunnel_invalid }}
+                </div>
               </div>
-              <div v-if="serverNameHasError" class="error-tip">
-                <span class="error-icon">⚠️</span>
-                {{ t.server_tab.errors.tunnel_invalid }}
-              </div>
-            </div>
+            </transition>
 
-            <!-- 端口号 -->
-            <div class="fluent-form-group">
+            <!-- 端口号 (免配置模式下铺满整行) -->
+            <div class="fluent-form-group" :style="serverMode === 'temp' ? { gridColumn: '1 / -1' } : {}">
               <label class="form-label">
                 {{ t.server_tab.port }}
                 <span class="required">*</span>
@@ -198,43 +223,109 @@
 
           <!-- 服务端主要操作按钮 (严格水平居中) -->
           <div class="actions-row center-actions">
-            <button class="fluent-btn" @click="handleCreateTunnel" :disabled="isCreatingTunnel">
-              <span class="btn-icon">➕</span>
-              {{ t.server_tab.btn_create }}
-            </button>
+            <!-- 专属固定通道下的操作按钮 (保持原样) -->
+            <template v-if="serverMode === 'fixed'">
+              <button class="fluent-btn" @click="handleCreateTunnel" :disabled="isCreatingTunnel">
+                <span class="btn-icon">➕</span>
+                {{ t.server_tab.btn_create }}
+              </button>
 
-            <button
-              v-if="!serverRunning"
-              class="fluent-btn primary"
-              @click="handleStartServer"
-              :disabled="serverNameHasError || serverPortHasError || !serverConfig.name || !serverConfig.port"
-            >
-              <span class="btn-icon">▶</span>
-              {{ t.server_tab.btn_start }}
-            </button>
+              <button
+                v-if="!serverRunning"
+                class="fluent-btn primary"
+                @click="handleStartServer"
+                :disabled="serverNameHasError || serverPortHasError || !serverConfig.name || !serverConfig.port"
+              >
+                <span class="btn-icon">▶</span>
+                {{ t.server_tab.btn_start }}
+              </button>
 
-            <button
-              v-else
-              class="fluent-btn danger"
-              @click="handleStopServer"
-            >
-              <span class="btn-icon">⏹</span>
-              {{ t.server_tab.btn_stop }}
-            </button>
+              <button
+                v-else
+                class="fluent-btn danger"
+                @click="handleStopServer"
+              >
+                <span class="btn-icon">⏹</span>
+                {{ t.server_tab.btn_stop }}
+              </button>
+            </template>
+
+            <!-- 免配置临时通道下的操作按钮 -->
+            <template v-else>
+              <button
+                v-if="!serverRunning"
+                class="fluent-btn primary"
+                @click="handleStartTempServer"
+                :disabled="serverPortHasError || !serverConfig.port"
+              >
+                <span class="btn-icon">⚡</span>
+                {{ t.server_tab.btn_get_temp_domain }}
+              </button>
+
+              <button
+                v-else
+                class="fluent-btn danger"
+                @click="handleStopServer"
+              >
+                <span class="btn-icon">⏹</span>
+                {{ t.server_tab.btn_stop }}
+              </button>
+            </template>
 
             <div class="status-pill" :class="serverRunning ? 'online' : 'offline'">
               <span class="pill-dot"></span>
-              {{ serverRunning ? t.server_tab.status_running : t.server_tab.status_stopped }}
+              {{ serverRunning ? (serverMode === 'temp' && tempTunnelUrl ? t.server_tab.status_temp_ready : t.server_tab.status_running) : t.server_tab.status_stopped }}
             </div>
           </div>
+
+          <!-- 免配置临时通道专属文本文案与临时公网地址高亮区域 -->
+          <transition name="mode-fade">
+            <div v-if="serverMode === 'temp'" class="temp-mode-container">
+              <div class="temp-mode-tip">
+                <span class="tip-icon">💡</span>
+                <span>{{ t.server_tab.temp_mode_tip }}</span>
+              </div>
+
+              <!-- 临时公网地址高亮展示卡片 -->
+              <div v-if="serverRunning" class="temp-domain-card">
+                <div class="temp-domain-header">
+                  <div class="temp-domain-title">
+                    <span class="pulse-dot"></span>
+                    <span>{{ t.server_tab.temp_domain_title }}</span>
+                  </div>
+                  <span v-if="tempTunnelUrl" class="temp-tag">{{ t.server_tab.temp_tag_active }}</span>
+                  <span v-else class="temp-tag loading">{{ t.server_tab.temp_tag_applying }}</span>
+                </div>
+
+                <div class="temp-domain-body">
+                  <div v-if="tempTunnelUrl" class="domain-display-box">
+                    <span class="domain-text">{{ tempTunnelUrl }}</span>
+                    <button class="fluent-btn small copy-domain-btn" @click="copyTempDomain">
+                      <span>📋</span>
+                      <span>{{ t.server_tab.temp_copy_btn }}</span>
+                    </button>
+                  </div>
+                  <div v-else class="domain-loading-box">
+                    <span class="loading-spinner"></span>
+                    <span>{{ t.server_tab.temp_applying_text }}</span>
+                  </div>
+                </div>
+
+                <div v-if="tempTunnelUrl" class="temp-domain-footer">
+                  <span>{{ t.server_tab.temp_client_tip }}</span>
+                </div>
+              </div>
+            </div>
+          </transition>
         </div>
 
-        <!-- 隧道列表数据卡片 (内部拥有专属上下滑动条) -->
-        <div class="fluent-card table-card">
-          <div class="card-header">
-            <h3 class="card-title">{{ t.server_tab.list_title }}</h3>
-            <span class="card-subtitle">（双击行可快速填入隧道名字）</span>
-          </div>
+        <!-- 隧道列表数据卡片 (仅在专属固定通道模式下显示) -->
+        <transition name="mode-fade">
+          <div v-if="serverMode === 'fixed'" class="fluent-card table-card">
+            <div class="card-header">
+              <h3 class="card-title">{{ t.server_tab.list_title }}</h3>
+              <span class="card-subtitle">{{ t.server_tab.list_subtitle }}</span>
+            </div>
 
           <!-- 内部独立滚动区域 -->
           <div class="fluent-table-wrapper">
@@ -291,6 +382,7 @@
             </button>
           </div>
         </div>
+        </transition>
       </section>
 
       <!-- 2. 客户端 Tab (无额外滑动条) -->
@@ -610,7 +702,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { safeInvoke as invoke, safeListen as listen } from './utils/tauriBridge';
 import { LANG_ORDER, LANG_DATA } from './i18n';
 import { LangKey, TunnelInfo, LogEntry } from './types';
@@ -754,6 +846,57 @@ const updateTabSlider = () => {
   });
 };
 
+// 服务端通道模式: 'fixed' (专属固定通道) | 'temp' (免配置临时通道)
+const serverMode = ref<'fixed' | 'temp'>((localStorage.getItem('server_mode') as 'fixed' | 'temp') || 'fixed');
+const tempTunnelUrl = ref(localStorage.getItem('temp_tunnel_url') || '');
+const isFetchingTempUrl = ref(false);
+
+const modeSelectorRef = ref<HTMLElement | null>(null);
+const fixedModeBtnRef = ref<HTMLButtonElement | null>(null);
+const tempModeBtnRef = ref<HTMLButtonElement | null>(null);
+
+const modeSliderStyle = ref({
+  left: '0px',
+  width: '0px',
+  opacity: '0',
+});
+
+const updateModeSlider = () => {
+  nextTick(() => {
+    let targetEl: HTMLButtonElement | null = null;
+    if (serverMode.value === 'fixed') targetEl = fixedModeBtnRef.value;
+    else if (serverMode.value === 'temp') targetEl = tempModeBtnRef.value;
+
+    if (targetEl && modeSelectorRef.value) {
+      const parentRect = modeSelectorRef.value.getBoundingClientRect();
+      const elRect = targetEl.getBoundingClientRect();
+      const left = elRect.left - parentRect.left;
+      const width = elRect.width;
+
+      modeSliderStyle.value = {
+        left: `${left}px`,
+        width: `${width}px`,
+        opacity: '1',
+      };
+    }
+  });
+};
+
+const setServerMode = (mode: 'fixed' | 'temp') => {
+  serverMode.value = mode;
+  localStorage.setItem('server_mode', mode);
+  soundManager.playTab();
+  updateModeSlider();
+};
+
+watch(tempTunnelUrl, (newVal) => {
+  if (newVal) {
+    localStorage.setItem('temp_tunnel_url', newVal);
+  } else {
+    localStorage.removeItem('temp_tunnel_url');
+  }
+});
+
 // 表单输入
 const serverConfig = ref({
   name: localStorage.getItem('server_tunnel_name') || 'mc',
@@ -876,6 +1019,9 @@ const switchTab = (tab: string) => {
   currentTab.value = tab;
   localStorage.setItem('app_tab', tab);
   updateTabSlider();
+  if (tab === 'server') {
+    updateModeSlider();
+  }
 };
 
 // 显示 Toast
@@ -1048,12 +1194,58 @@ const handleStartServer = async () => {
   }
 };
 
+// 启动免配置临时隧道 (一键获取临时域名)
+const handleStartTempServer = async () => {
+  const port = serverConfig.value.port.trim();
+
+  if (!isPortValid(port)) {
+    serverPortHasError.value = true;
+    appendLog(`[ERROR] 本地端口错误 (需为 1-65535 纯数字)`, 'error', 'server');
+    return;
+  }
+
+  tempTunnelUrl.value = '';
+  isFetchingTempUrl.value = true;
+  soundManager.playSuccess();
+
+  appendLog(`[INFO] 正在启动免配置临时隧道 (转发本地端口: ${port}) ...`, 'info', 'server');
+
+  try {
+    const res = await invoke<string>('start_temp_tunnel', { port });
+    serverRunning.value = true;
+    appendLog(`[SUCCESS] ${res}`, 'success', 'server');
+    showToast(`临时隧道已启动，正在获取临时域名...`);
+  } catch (err: any) {
+    isFetchingTempUrl.value = false;
+    appendLog(`[ERROR] 启动免配置临时隧道失败: ${err}`, 'error', 'server');
+  }
+};
+
+// 复制临时域名到剪贴板
+const copyTempDomain = async () => {
+  if (!tempTunnelUrl.value) return;
+  try {
+    await navigator.clipboard.writeText(tempTunnelUrl.value);
+    soundManager.playSuccess();
+    const toastStr = t.value.server_tab.temp_copy_success
+      ? t.value.server_tab.temp_copy_success.replace('{domain}', tempTunnelUrl.value)
+      : `已复制临时域名: ${tempTunnelUrl.value}`;
+    showToast(toastStr);
+    appendLog(`[INFO] 已复制临时公网地址到剪贴板: ${tempTunnelUrl.value}`, 'info', 'server');
+  } catch {
+    appendLog('复制域名失败，请检查剪贴板权限', 'error', 'server');
+  }
+};
+
 // 停止服务端隧道 (普通点击音效)
 const handleStopServer = async () => {
   soundManager.playClick();
   try {
     const res = await invoke<string>('stop_server_tunnel');
     serverRunning.value = false;
+    tempTunnelUrl.value = '';
+    isFetchingTempUrl.value = false;
+    localStorage.removeItem('temp_tunnel_url');
     appendLog(`[INFO] ${res}`, 'warn', 'server');
     showToast(`服务端隧道已停止`);
   } catch (err: any) {
@@ -1220,14 +1412,20 @@ const onClickOutside = (e: MouseEvent) => {
 };
 
 // 初始化与事件监听
+const onWindowResize = () => {
+  updateTabSlider();
+  updateModeSlider();
+};
+
 onMounted(async () => {
   syncThemeToDocument();
   document.title = t.value.title;
   window.addEventListener('keydown', onKeyDown);
   document.addEventListener('click', onClickOutside);
-  window.addEventListener('resize', updateTabSlider);
+  window.addEventListener('resize', onWindowResize);
 
   updateTabSlider();
+  updateModeSlider();
 
   // 获取并监听窗口最大化状态
   try {
@@ -1246,6 +1444,16 @@ onMounted(async () => {
       'log-message',
       (event) => {
         appendLog(event.payload.message, event.payload.level, event.payload.source);
+
+        // 自动抓取 trycloudflare.com 临时公网域名
+        if (event.payload.source === 'server' || event.payload.source === 'system') {
+          const match = event.payload.message.match(/https?:\/\/([a-zA-Z0-9-]+\.trycloudflare\.com)/i)
+            || event.payload.message.match(/([a-zA-Z0-9-]+\.trycloudflare\.com)/i);
+          if (match && match[1]) {
+            tempTunnelUrl.value = match[1];
+            isFetchingTempUrl.value = false;
+          }
+        }
       }
     );
 
@@ -1261,6 +1469,13 @@ onMounted(async () => {
   try {
     serverRunning.value = await invoke<boolean>('is_server_running');
     clientRunning.value = await invoke<boolean>('is_client_running');
+
+    // 如果服务端实际未在运行，清空可能残留的临时公网地址
+    if (!serverRunning.value) {
+      tempTunnelUrl.value = '';
+      localStorage.removeItem('temp_tunnel_url');
+    }
+
     await handleRefreshTunnels();
   } catch {}
 });
@@ -1268,7 +1483,7 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeyDown);
   document.removeEventListener('click', onClickOutside);
-  window.removeEventListener('resize', updateTabSlider);
+  window.removeEventListener('resize', onWindowResize);
 });
 </script>
 
@@ -1784,6 +1999,213 @@ onUnmounted(() => {
 
 .form-card {
   flex-shrink: 0;
+}
+
+/* 服务端通道模式分段选择器 (Segmented Control，带平滑滑动背景滑块) */
+.server-mode-selector {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background-color: var(--bg-card);
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  margin-bottom: 2px;
+  width: fit-content;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  user-select: none;
+}
+
+.mode-slider {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  transition: left 0.25s cubic-bezier(0.25, 1, 0.5, 1),
+              width 0.25s cubic-bezier(0.25, 1, 0.5, 1),
+              opacity 0.2s ease;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.mode-segment-btn {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+  transition: color 0.2s ease;
+  user-select: none;
+}
+
+.mode-segment-btn:hover {
+  color: var(--text-primary);
+}
+
+.mode-segment-btn.active {
+  color: var(--accent-color);
+  font-weight: 600;
+}
+
+.mode-icon {
+  font-size: 14px;
+}
+
+/* 模式切换内容平滑淡入淡出动画 */
+.mode-fade-enter-active,
+.mode-fade-leave-active {
+  transition: opacity 0.22s cubic-bezier(0.25, 1, 0.5, 1),
+              transform 0.22s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.mode-fade-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+.mode-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+/* 临时通道模式文本文案与 Tooltip */
+.temp-mode-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 10px 14px;
+  background-color: rgba(255, 185, 0, 0.08);
+  border: 1px solid rgba(255, 185, 0, 0.25);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.tip-icon {
+  font-size: 15px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* 临时公网域名高亮展示卡片 */
+.temp-domain-card {
+  margin-top: 14px;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, rgba(0, 120, 212, 0.06) 0%, rgba(96, 205, 255, 0.04) 100%);
+  border: 1px solid var(--accent-color);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 120, 212, 0.08);
+  animation: tabViewFade 0.25s ease;
+}
+
+.temp-domain-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.temp-domain-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.temp-tag {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background-color: rgba(16, 124, 65, 0.12);
+  color: var(--success-color);
+  font-weight: 600;
+  border: 1px solid rgba(16, 124, 65, 0.25);
+}
+
+.temp-tag.loading {
+  background-color: rgba(255, 185, 0, 0.12);
+  color: #ffb900;
+  border-color: rgba(255, 185, 0, 0.25);
+}
+
+.domain-display-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.domain-text {
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent-color);
+  word-break: break-all;
+  user-select: text;
+}
+
+.copy-domain-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+.domain-loading-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background-color: var(--bg-input);
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--success-color);
+  box-shadow: 0 0 6px var(--success-color);
+  animation: pulseAnimation 1.6s infinite ease-in-out;
+}
+
+@keyframes pulseAnimation {
+  0%, 100% { transform: scale(0.9); opacity: 0.7; }
+  50% { transform: scale(1.25); opacity: 1; }
+}
+
+.temp-domain-footer {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
 }
 
 .card-header {

@@ -25,6 +25,8 @@ export interface LangPack {
     misc: string;
   };
   server_tab: {
+    mode_fixed: string;
+    mode_temp: string;
     tunnel_name: string;
     port: string;
     tunnel_name_placeholder: string;
@@ -32,12 +34,23 @@ export interface LangPack {
     btn_create: string;
     btn_start: string;
     btn_stop: string;
+    btn_get_temp_domain: string;
     btn_refresh: string;
     btn_delete: string;
     btn_clear_log: string;
     status_running: string;
     status_stopped: string;
+    status_temp_ready: string;
+    temp_mode_tip: string;
+    temp_domain_title: string;
+    temp_tag_active: string;
+    temp_tag_applying: string;
+    temp_copy_btn: string;
+    temp_copy_success: string;
+    temp_applying_text: string;
+    temp_client_tip: string;
     list_title: string;
+    list_subtitle: string;
     headers: {
       id: string;
       name: string;

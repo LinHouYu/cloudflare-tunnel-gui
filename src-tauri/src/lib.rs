@@ -512,6 +512,98 @@ fn start_server_tunnel(
 }
 
 #[tauri::command]
+fn start_temp_tunnel(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    port: String,
+) -> Result<String, String> {
+    let port_trimmed = port.trim();
+
+    if port_trimmed.is_empty() || port_trimmed.parse::<u16>().is_err() {
+        return Err("端口号必须为 1-65535 的纯数字".to_string());
+    }
+
+    let mut proc_guard = state.server_process.lock().map_err(|e| e.to_string())?;
+    if let Some(ref mut child) = *proc_guard {
+        let _ = child.kill();
+        let _ = child.wait();
+        *proc_guard = None;
+    }
+
+    let url_arg = format!("tcp://localhost:{}", port_trimmed);
+    let mut cmd = create_base_command();
+    cmd.args(["tunnel", "--url", &url_arg])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            "未找到 cloudflared 程序，请先点击「安装 cloudflared」".to_string()
+        } else {
+            format!("启动临时隧道失败: {}", e)
+        }
+    })?;
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    let app_clone1 = app.clone();
+    if let Some(out) = stdout {
+        thread::spawn(move || {
+            let reader = BufReader::new(out);
+            for line in reader.lines().flatten() {
+                let _ = app_clone1.emit(
+                    "log-message",
+                    LogPayload {
+                        message: line,
+                        level: "info".to_string(),
+                        source: "server".to_string(),
+                    },
+                );
+            }
+        });
+    }
+
+    let app_clone2 = app.clone();
+    if let Some(err) = stderr {
+        thread::spawn(move || {
+            let reader = BufReader::new(err);
+            for line in reader.lines().flatten() {
+                let level = if line.contains("ERR") || line.contains("error") {
+                    "error"
+                } else if line.contains("WRN") || line.contains("warn") {
+                    "warn"
+                } else {
+                    "info"
+                };
+                let _ = app_clone2.emit(
+                    "log-message",
+                    LogPayload {
+                        message: line,
+                        level: level.to_string(),
+                        source: "server".to_string(),
+                    },
+                );
+            }
+        });
+    }
+
+    *proc_guard = Some(child);
+
+    let start_msg = format!("已启动免配置临时隧道 (转发端口: {})，正在连接 Cloudflare 获取临时域名...", port_trimmed);
+    let _ = app.emit(
+        "log-message",
+        LogPayload {
+            message: format!("[INFO] {}", start_msg),
+            level: "success".to_string(),
+            source: "server".to_string(),
+        },
+    );
+
+    Ok(start_msg)
+}
+
+#[tauri::command]
 fn stop_server_tunnel(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
     let mut proc_guard = state.server_process.lock().map_err(|e| e.to_string())?;
     if let Some(mut child) = proc_guard.take() {
@@ -1196,6 +1288,7 @@ pub fn run() {
             create_and_route_tunnel,
             delete_tunnel,
             start_server_tunnel,
+            start_temp_tunnel,
             stop_server_tunnel,
             start_client_tunnel,
             stop_client_tunnel,

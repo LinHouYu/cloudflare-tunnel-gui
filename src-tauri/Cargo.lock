@@ -479,7 +479,7 @@ dependencies = [
 
 [[package]]
 name = "cloudflared_gui"
-version = "0.1.0"
+version = "1.0.4"
 dependencies = [
  "dirs 5.0.1",
  "open",

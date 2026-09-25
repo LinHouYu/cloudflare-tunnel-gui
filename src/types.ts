@@ -41,6 +41,8 @@ export interface LangPack {
     status_running: string;
     status_stopped: string;
     status_temp_ready: string;
+    node_label: string;
+    nodes: Record<string, string>;
     temp_mode_tip: string;
     temp_domain_title: string;
     temp_tag_active: string;

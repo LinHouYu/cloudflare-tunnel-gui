@@ -114,10 +114,13 @@ export async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>)
       const nouns = ['tiger', 'falcon', 'nebula', 'tunnel', 'dragon', 'phoenix', 'forest'];
       const randomSubdomain = `${adjectives[Math.floor(Math.random() * adjectives.length)]}-${nouns[Math.floor(Math.random() * nouns.length)]}-${Math.floor(Math.random() * 900 + 100)}`;
       const tempDomain = `${randomSubdomain}.trycloudflare.com`;
+      const sampleNodes = ['eze01', 'gru02', 'sjc01', 'lax03', 'hkg01', 'nrt02', 'lhr01', 'fra02'];
+      const chosenNode = sampleNodes[Math.floor(Math.random() * sampleNodes.length)];
 
       emitMockLog(`[INFO] 正在启动免配置临时隧道 (转发端口: ${port})...`, 'info', 'server');
       emitMockLog(`[INFO] 正在向 Cloudflare 申请临时公网域名 (QUIC/HTTP3)...`, 'info', 'server');
       setTimeout(() => {
+        emitMockLog(`[INFO] Registered tunnel connection connIndex=0 connection=cf-${Math.random().toString(16).substr(2, 8)} location=${chosenNode} protocol=quic`, 'info', 'server');
         emitMockLog(`+--------------------------------------------------------------------------------------------+`, 'info', 'server');
         emitMockLog(`|  Your quick Tunnel has been created! Visit it at (it may take some time to be reachable):  |`, 'info', 'server');
         emitMockLog(`|  https://${tempDomain}                                                                      |`, 'success', 'server');

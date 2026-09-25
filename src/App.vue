@@ -274,7 +274,7 @@
 
             <div class="status-pill" :class="serverRunning ? 'online' : 'offline'">
               <span class="pill-dot"></span>
-              {{ serverRunning ? (serverMode === 'temp' && tempTunnelUrl ? t.server_tab.status_temp_ready : t.server_tab.status_running) : t.server_tab.status_stopped }}
+              {{ serverStatusText }}
             </div>
           </div>
 
@@ -849,7 +849,31 @@ const updateTabSlider = () => {
 // 服务端通道模式: 'fixed' (专属固定通道) | 'temp' (免配置临时通道)
 const serverMode = ref<'fixed' | 'temp'>((localStorage.getItem('server_mode') as 'fixed' | 'temp') || 'fixed');
 const tempTunnelUrl = ref(localStorage.getItem('temp_tunnel_url') || '');
+const tempTunnelNodeCode = ref(localStorage.getItem('temp_tunnel_node_code') || '');
 const isFetchingTempUrl = ref(false);
+
+// 服务端运行状态文本计算 (支持临时模式动态展示 Cloudflare 节点代码与地理区域)
+const serverStatusText = computed(() => {
+  if (!serverRunning.value) {
+    return t.value.server_tab.status_stopped;
+  }
+  if (serverMode.value === 'temp' && tempTunnelUrl.value) {
+    if (tempTunnelNodeCode.value) {
+      const codeKey = tempTunnelNodeCode.value.toLowerCase();
+      const codeUpper = tempTunnelNodeCode.value.toUpperCase();
+      const nodesMap = t.value.server_tab.nodes || {};
+      const region = nodesMap[codeKey];
+      const nodeLabel = t.value.server_tab.node_label || '节点';
+      if (region) {
+        return `${t.value.server_tab.status_temp_ready} (${nodeLabel}: ${codeUpper} - ${region})`;
+      } else {
+        return `${t.value.server_tab.status_temp_ready} (${nodeLabel}: ${codeUpper})`;
+      }
+    }
+    return t.value.server_tab.status_temp_ready;
+  }
+  return t.value.server_tab.status_running;
+});
 
 const modeSelectorRef = ref<HTMLElement | null>(null);
 const fixedModeBtnRef = ref<HTMLButtonElement | null>(null);
@@ -894,6 +918,14 @@ watch(tempTunnelUrl, (newVal) => {
     localStorage.setItem('temp_tunnel_url', newVal);
   } else {
     localStorage.removeItem('temp_tunnel_url');
+  }
+});
+
+watch(tempTunnelNodeCode, (newVal) => {
+  if (newVal) {
+    localStorage.setItem('temp_tunnel_node_code', newVal);
+  } else {
+    localStorage.removeItem('temp_tunnel_node_code');
   }
 });
 
@@ -1205,6 +1237,7 @@ const handleStartTempServer = async () => {
   }
 
   tempTunnelUrl.value = '';
+  tempTunnelNodeCode.value = '';
   isFetchingTempUrl.value = true;
   soundManager.playSuccess();
 
@@ -1244,8 +1277,10 @@ const handleStopServer = async () => {
     const res = await invoke<string>('stop_server_tunnel');
     serverRunning.value = false;
     tempTunnelUrl.value = '';
+    tempTunnelNodeCode.value = '';
     isFetchingTempUrl.value = false;
     localStorage.removeItem('temp_tunnel_url');
+    localStorage.removeItem('temp_tunnel_node_code');
     appendLog(`[INFO] ${res}`, 'warn', 'server');
     showToast(`服务端隧道已停止`);
   } catch (err: any) {
@@ -1445,13 +1480,23 @@ onMounted(async () => {
       (event) => {
         appendLog(event.payload.message, event.payload.level, event.payload.source);
 
-        // 自动抓取 trycloudflare.com 临时公网域名
+        // 自动抓取 trycloudflare.com 临时公网域名与 Cloudflare 节点代码 (如 location=eze01, location=sjc)
         if (event.payload.source === 'server' || event.payload.source === 'system') {
           const match = event.payload.message.match(/https?:\/\/([a-zA-Z0-9-]+\.trycloudflare\.com)/i)
             || event.payload.message.match(/([a-zA-Z0-9-]+\.trycloudflare\.com)/i);
           if (match && match[1]) {
             tempTunnelUrl.value = match[1];
             isFetchingTempUrl.value = false;
+          }
+
+          // 正则提取 Cloudflare 节点代码（忽略末尾数字，如 eze01 -> eze）
+          const locMatch = event.payload.message.match(/location[=:\s"]+([a-zA-Z]+)\d*/i)
+            || event.payload.message.match(/location=([a-zA-Z0-9]+)/i);
+          if (locMatch && locMatch[1]) {
+            const rawLetters = locMatch[1].replace(/[^a-zA-Z]/g, '').slice(0, 3).toLowerCase();
+            if (rawLetters.length === 3) {
+              tempTunnelNodeCode.value = rawLetters;
+            }
           }
         }
       }
@@ -1470,10 +1515,12 @@ onMounted(async () => {
     serverRunning.value = await invoke<boolean>('is_server_running');
     clientRunning.value = await invoke<boolean>('is_client_running');
 
-    // 如果服务端实际未在运行，清空可能残留的临时公网地址
+    // 如果服务端实际未在运行，清空可能残留的临时公网地址与节点代码
     if (!serverRunning.value) {
       tempTunnelUrl.value = '';
+      tempTunnelNodeCode.value = '';
       localStorage.removeItem('temp_tunnel_url');
+      localStorage.removeItem('temp_tunnel_node_code');
     }
 
     await handleRefreshTunnels();

@@ -7,6 +7,7 @@
 <h3>基于 Tauri 2.0 + Vue 3 + Rust 构建的跨平台极简 Cloudflare 隧道管理客户端</h3>
 
 <p align="center">
+  <img src="https://img.shields.io/badge/Release-v1.0.4-blue.svg" alt="Version 1.0.4" />
   <img src="https://img.shields.io/badge/License-CC%20BY--NC%204.0-red.svg" alt="Non-Commercial License" />
   <img src="https://img.shields.io/badge/Tauri-2.0-blue.svg?logo=tauri" alt="Tauri 2.0" />
   <img src="https://img.shields.io/badge/Vue-3.x-brightgreen.svg?logo=vuedotjs" alt="Vue 3" />
@@ -37,14 +38,18 @@
 | **安装包体积** | 需打包庞大的 Python 解释器（50MB+） | **极度轻量化，安装包仅约 3 ~ 5 MB** |
 | **内存占用** | 运行时常驻内存 ~150MB+ | **极致低消耗，运行时仅约 25MB** |
 | **UI 视觉设计** | 传统经典简陋窗口 | **Windows 11 Fluent 亚克力无边框现代美学** |
-| **交互体验** | 仅支持单一语言与基础点击 | **Web Audio 纯合成音效、6国语言、动态终端、彩蛋** |
+| **交互体验** | 仅支持单一语言与基础点击 | **双模式平滑滑块、Web Audio 合成音效、6国语言、动态终端、彩蛋** |
+| **隧道模式** | 仅支持单一固定配置 | **支持「专属固定通道」与「免配置临时通道」双模式自由切换** |
 | **跨平台支持** | Windows 专属或跨平台配置繁琐 | **全面覆盖 Windows / macOS / Linux 8 大主流架构** |
 
 ---
 
 ## ✨ 核心特性一览
 
-- 🪟 **Windows 11 Fluent Design 美学**：无边框自定义标题栏、亚克力毛玻璃质感、深色/浅色模式平滑 360° 旋转切换、平滑滑动指示滑块。
+- 🪟 **Windows 11 Fluent Design 美学**：无边框自定义标题栏、亚克力毛玻璃质感、深色/浅色模式平滑 360° 旋转切换、分段选择器平滑滑动指示滑块。
+- ⚡ **双通道模式自由切换 (Segmented Control)**：
+  - 🔒 **专属固定通道**：贯彻“约定大于配置”哲学，底层自动隐式完成子域名绑定与 DNS CNAME 覆盖（`tunnel route dns -f`），全自动管理持久隧道。
+  - ⚡ **免配置临时通道 (Quick Tunnel)**：无需登录 Cloudflare 账号，仅需输入本地端口，一键向 Cloudflare 申请临时公网域名（`*.trycloudflare.com`），自动抓取控制台输出并高亮展示，支持一键复制与状态持久化保存。
 - 🎵 **Web Audio API 纯代码合成音效**：内置轻快悬浮音（`playHover`）、清亮点击音（`playClick`）、复合 Tab 切换音（`playTab`）以及阶梯四音阶成功音（`playSuccess`），支持数位笔/触控板空中悬浮手势。
 - 🦊 **专属「酒狐」语音彩蛋**：点击左上角 Cloudflared Logo 触发左右轻微弹性抖动，并随机播放内嵌的酒狐语音。
 - 🌐 **国际化多语言支持**：内置 6 大语言包（简体中文、繁體中文、English、Español、Português、日本語），切换语言即时生效。
@@ -57,39 +62,30 @@
 
 ## 🚀 详细使用指南
 
-### 准备工作
-1. 注册并登录 [Cloudflare 账号](https://dash.cloudflare.com/)；
-2. 准备一个已托管在 Cloudflare 上的域名（例如 `example.com`）。
+### 模式一：免配置临时通道 (最推荐，免登录极速开通)
+适用于临时联机游戏、即时文件分享或临时调试（无需购买域名或登录 Cloudflare 账号）：
+1. 打开应用程序，在 **「🖥️ 服务端」** 顶部切换至 **「⚡ 免配置临时通道」**；
+2. 输入您的 **本地端口**（如 Minecraft 游戏服 `25565`、本地 Web 服务 `8080` 等）；
+3. 点击 **「⚡ 一键获取临时域名」**：
+   - 程序将自动执行 `cloudflared tunnel --url tcp://localhost:[端口]`；
+   - 并在界面生成一张醒目的高亮卡片展示分配到的临时域名（如 `https://xxxx.trycloudflare.com`）；
+4. 点击 **「📋 复制域名」** 发送给访客，访客在 **「💻 客户端」** 输入此域名即可实现反向代理直连！
 
 ---
 
-### 第一步：安装与授权登录
-1. 打开应用程序，切换至 **「⚙️ 杂项与关于」** 标签页；
-2. 点击 **「📦 安装 cloudflared」**：程序将自动检测您当前设备的系统与架构，并拉取最新官方二进制；
-3. 点击 **「🔑 Cloudflared 授权登录」**：系统将唤起默认浏览器，请在打开的 Cloudflare 网页上选择您要授权的域名完成登录（授权证书将保存在本地 `~/.cloudflared/cert.pem`）。
+### 模式二：专属固定通道 (绑定账号的永久专属域名)
+适用于需要长期稳定运行的私有服务：
+1. **第一步（首次使用）**：在 **「⚙️ 杂项与关于」** 页面点击 **「🔑 Cloudflared 授权登录」** 完成域名授权；
+2. **第二步（创建隧道）**：在 **「🖥️ 服务端」** 选择 **「🔒 专属固定通道」**，输入 **隧道名字**（如 `mc`）和 **本地端口**（如 `25565`），点击 **「➕ 创建隧道」**（底层将全自动完成隧道创建与 DNS CNAME 强制解析）；
+3. **第三步（启动服务）**：在隧道列表中选中该隧道，点击 **「▶ 启动隧道」**，状态显示为绿色「运行中」即可。
 
 ---
 
-### 第二步：服务端配置（创建与启动隧道）
-适用于将本地运行的服务（如本地 Minecraft 游戏服、Web 网站、NAS 服务等）安全映射到公网：
-1. 切换至 **「🖥️ 服务端」** 标签页；
-2. 输入 **隧道名字**（纯英文字母，如 `mc`）与 **本地端口**（如 `25565`）；
-3. 点击 **「➕ 创建隧道」**：创建成功后，隧道列表将实时刷新并显示新隧道的 ID；
-4. 选中列表中创建的隧道，点击 **「▶ 启动隧道」**，状态徽章变为绿色「运行中」即代表公网隧道打通！
-
----
-
-### 第三步：客户端连接（访问远程服务）
+### 客户端连接（访问远程服务）
 适用于在异地客户端设备上，通过 Cloudflare 隧道直接连接已发布的远程服务端：
 1. 切换至 **「💻 客户端」** 标签页；
-2. 输入由服务端绑定的 **隧道域名**（如 `mc.yourdomain.com`）与 **本地监听端口**（如 `25565`）；
-3. 点击 **「🔗 连接客户端」**：连接成功后，您只需在本地应用中访问 `127.0.0.1:25565` 即可享受内网般的直连体验。
-
----
-
-### 第四步：凭证安全与配置文件目录
-- 在 **「⚙️ 杂项与关于」** 页面点击 **「📂 打开本地配置文件目录」**，可快速唤起系统的文件资源管理器查看 `~/.cloudflared` 目录；
-- ⚠️ **安全警告**：请切勿将目录下的 `cert.pem` 证书文件与 `<tunnel_id>.json` 凭证展示或分享给任何人！
+2. 输入服务端生成的 **隧道域名**（临时域名或固定域名）与 **本地监听端口**（如 `25565`）；
+3. 点击 **「🔗 连接客户端」**：连接成功后，在本地应用中连接 `127.0.0.1:[监听端口]` 即可享受内网般的直连体验。
 
 ---
 
@@ -102,8 +98,8 @@
 
 ### 1. 克隆代码并安装依赖
 ```bash
-git clone https://github.com/LinHouYu/cloudflared_GUI.git
-cd cloudflared_GUI
+git clone https://github.com/LinHouYu/cloudflare-tunnel-gui.git
+cd cloudflare-tunnel-gui
 npm install
 ```
 
@@ -136,13 +132,13 @@ npm run build
 项目内置完善的 [.github/workflows/release.yml](.github/workflows/release.yml) 矩阵构建脚本。只需推送版本标签（Tag），即可自动并行构建并发布全平台安装包至 GitHub Releases：
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag 1.0.4
+git push origin 1.0.4
 ```
 
 ### 支持生成的安装包类型：
-- **Windows**: x86_64, i686 (32位) —— 便携版、`.msi`、`.exe` (NSIS 安装包，内置专属图标)
-- **macOS**: Apple Silicon (M1/M2/M3/M4)、Intel x86_64 —— `.dmg` 镜像包
+- **Windows**: x86_64, i686 (32位) —— 便携版、`.msi` (MSI 安装包)、`.exe` (NSIS 安装包，内置专属图标)
+- **macOS**: Apple Silicon (M1/M2/M3/M4)、Intel x86_64 —— `.dmg` 镜像包、`.app.tar.gz`
 - **Linux**: x86_64, i686, aarch64 (ARM64), armv7 —— `.AppImage`、`.deb` 安装包
 
 ---

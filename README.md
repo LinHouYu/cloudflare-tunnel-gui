@@ -7,7 +7,7 @@
 <h3>基于 Tauri 2.0 + Vue 3 + Rust 构建的跨平台极简 Cloudflare 隧道管理客户端</h3>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Release-v1.0.4-blue.svg" alt="Version 1.0.4" />
+  <img src="https://img.shields.io/badge/Release-v1.0.5-blue.svg" alt="Version 1.0.5" />
   <img src="https://img.shields.io/badge/License-CC%20BY--NC%204.0-red.svg" alt="Non-Commercial License" />
   <img src="https://img.shields.io/badge/Tauri-2.0-blue.svg?logo=tauri" alt="Tauri 2.0" />
   <img src="https://img.shields.io/badge/Vue-3.x-brightgreen.svg?logo=vuedotjs" alt="Vue 3" />
